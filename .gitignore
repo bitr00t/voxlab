@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.env
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+# Generated audio and evaluation artifacts never belong in the repository.
+recordings/
+out/
+*.wav

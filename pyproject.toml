@@ -1,0 +1,84 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "voxlab"
+version = "0.1.0"
+description = "A local-first German voice agent with swappable STT/LLM/TTS providers and an evaluation harness."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+# Phase 0 keeps the core dependency set deliberately small: everything here is
+# pure Python and installs on any machine, with or without a GPU. Heavy runtime
+# dependencies live in the optional extras below so that CI, unit tests and a
+# laptop without CUDA can still import the package.
+dependencies = [
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "httpx>=0.27",
+    "typer>=0.12",
+    "rich>=13.7",
+]
+
+[project.optional-dependencies]
+# Speech-to-text: faster-whisper large-v3 in float16.
+# The two nvidia-* wheels are what make this work on Windows without a manual
+# CUDA Toolkit install. See src/voxlab/runtime/cuda_windows.py for why they are
+# not enough on their own.
+stt = [
+    "faster-whisper>=1.1.0",
+    "nvidia-cublas-cu12>=12.4",
+    "nvidia-cudnn-cu12>=9.1",
+]
+# Text-to-speech: Qwen3-TTS.
+# NOTE: verify the distribution name against the current upstream release before
+# relying on this extra; the TTS ecosystem renames packages often.
+tts = ["qwen-tts"]
+# Phase 1 audio path: direct microphone and speaker access on the host OS.
+audio = ["sounddevice>=0.4.7", "numpy>=1.26"]
+# Phase 2 audio path: browser transport over WebRTC.
+webrtc = ["livekit-agents>=0.12"]
+dev = [
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+    "mypy>=1.10",
+]
+
+[project.scripts]
+voxlab = "voxlab.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/voxlab"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# start() and aclose() are deliberately optional lifecycle hooks with a no-op
+# default: a provider that owns no model and no socket should not be forced to
+# implement them.
+"src/voxlab/providers/base.py" = ["B024", "B027"]
+"src/voxlab/audio/transport.py" = ["B027"]
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["voxlab"]
+mypy_path = "src"
+strict = true
+
+[[tool.mypy.overrides]]
+# Optional runtime dependencies that ship no type information.
+module = ["faster_whisper.*", "ctranslate2.*", "sounddevice.*", "numpy.*"]
+ignore_missing_imports = true
