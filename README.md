@@ -9,11 +9,13 @@ it depends on a per-minute cloud service, which makes it a reasonable answer to
 the two questions a mid-sized German company asks about voice agents: what does
 it cost, and where does the audio go.
 
-**Status: Phase 0.** The architecture, the interfaces and the tooling are in
-place, and the pipeline runs end to end with placeholder providers. No speech
-happens yet - see the roadmap below.
+**Status: Phase 1.** The agent listens, thinks and speaks. Turn taking is manual
+push-to-talk through the local microphone; automatic turn detection and barge-in
+arrive with the browser transport in phase 2.
 
 ## Quick start
+
+Without a GPU, to verify the wiring:
 
 ```powershell
 .\scripts\setup-dev.ps1
@@ -22,9 +24,21 @@ voxlab doctor
 voxlab smoke
 ```
 
-`voxlab smoke` runs one full turn through the pipeline using the placeholder
-providers. It needs no GPU, no model weights and no microphone - it proves the
-wiring, not the speech.
+`voxlab smoke` runs one full turn using the placeholder providers. It needs no
+GPU, no model weights and no microphone - it proves the wiring, not the speech.
+
+To actually talk to it:
+
+```powershell
+.\scripts\setup-dev.ps1 -Extras dev,stt,audio
+.\scripts\pull-models.ps1
+Copy-Item .env.example .env   # then uncomment the phase 1 block
+voxlab devices                # note the index of your microphone
+voxlab talk
+```
+
+Enter starts recording, Enter stops it, `q` ends the conversation. The first run
+downloads the Whisper weights, so give it a minute.
 
 ## Commands
 
@@ -34,6 +48,9 @@ wiring, not the speech.
 | `voxlab providers` | Lists every registered provider |
 | `voxlab config` | Prints the effective configuration |
 | `voxlab smoke` | Runs one turn and reports per-stage latency |
+| `voxlab talk` | Push-to-talk conversation through microphone and speakers |
+| `voxlab devices` | Lists audio devices with the index to configure |
+| `voxlab tts-probe` | Reports which speech synthesis packages are installed |
 
 ## Configuration
 
@@ -65,8 +82,8 @@ behind it is written down in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 | Phase | Content | Status |
 | --- | --- | --- |
 | 0 | Repository, provider interfaces, configuration, environment checks | done |
-| 1 | Push-to-talk loop on the host: faster-whisper, Ollama, Qwen3-TTS | next |
-| 2 | Real time in the browser: WebRTC transport, voice activity detection, barge-in | planned |
+| 1 | Push-to-talk loop on the host: faster-whisper, Ollama, Qwen3-TTS | done |
+| 2 | Real time in the browser: WebRTC transport, voice activity detection, barge-in | next |
 | 3 | Retrieval-augmented answers over a document base, plus tool calling | planned |
 | 4 | Evaluation harness and a provider comparison against a hosted service | planned |
 
@@ -84,6 +101,52 @@ Phase 1 stack:
 That leaves headroom on a 20 GB card. Swapping in a larger language model for
 better German means giving some of it back - most cheaply by moving Whisper to
 `medium` at int8.
+
+## Speech synthesis
+
+Local speech synthesis is the youngest part of the stack and its Python
+interfaces move. Everything uncertain is confined to one module,
+`voxlab.providers.tts.engine`, which obtains an engine in three ways: an
+explicit factory named in the configuration, a transformers-based engine for
+weights published as a Hugging Face model, or a package-level entry point tried
+against a few plausible call shapes.
+
+If `voxlab talk` cannot construct an engine, run `voxlab tts-probe` to see what
+is installed, then write your own factory and point the configuration at it:
+
+```python
+# my_adapters/qwen3.py
+from voxlab.providers.tts.engine import Engine, Samples
+
+class MyEngine(Engine):
+    def __init__(self, model: str, device: str) -> None:
+        ...  # whatever the upstream package actually wants
+
+    def synthesize(self, text: str, voice: str) -> Samples:
+        return Samples(data=..., sample_rate=24000)
+
+def create(model: str, device: str) -> MyEngine:
+    return MyEngine(model, device)
+```
+
+```
+VOXLAB__TTS__ADAPTER=my_adapters.qwen3:create
+```
+
+Fifteen lines of your own beat fighting a wrong assumption in this repository.
+
+## Sample rates
+
+Whisper works at 16 kHz, capture devices often do not offer that rate, and
+synthesis usually emits 24 kHz. Conversion happens in `voxlab.audio.resample`
+and nowhere else. The transport negotiates the capture rate with the device and
+resamples when it has to; playback opens the output device at the rate of the
+audio it is handed, so changing synthesiser cannot silently detune it.
+
+`soxr` does the work and ships with the `audio` extra. Without it the code falls
+back to linear interpolation, which is audible on the way out and measurable as
+lost recognition accuracy on the way in - `voxlab doctor` says so rather than
+leaving it to be discovered.
 
 ## Windows notes
 
