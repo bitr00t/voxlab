@@ -1,0 +1,66 @@
+"""Configuration, loaded from environment variables and an optional .env file.
+
+Provider selection is a string in the configuration, never an import in the
+calling code. That is the whole point of Phase 0: `VOXLAB__TTS__PROVIDER=qwen3`
+and `VOXLAB__TTS__PROVIDER=silent` must be interchangeable without touching the
+pipeline.
+"""
+
+from __future__ import annotations
+
+from pydantic import BaseModel, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class SttSettings(BaseModel):
+    provider: str = "echo"
+    model: str = "large-v3"
+    device: str = "cuda"
+    compute_type: str = "float16"
+    language: str | None = "de"
+    # Only used by HTTP-backed providers (Phase 2 deployment style).
+    base_url: str | None = None
+
+
+class LlmSettings(BaseModel):
+    provider: str = "static"
+    model: str = "qwen3:8b"
+    base_url: str = "http://127.0.0.1:11434"
+    temperature: float = 0.3
+    system_prompt: str = (
+        "Du bist die telefonische Erstauskunft eines mittelständischen "
+        "Unternehmens. Antworte kurz, höflich und in gesprochenem Deutsch. "
+        "Wenn du etwas nicht sicher weißt, sage das und biete an, an einen "
+        "Mitarbeiter weiterzuleiten."
+    )
+
+
+class TtsSettings(BaseModel):
+    provider: str = "silent"
+    model: str = "qwen3-tts"
+    voice: str = "de-default"
+    device: str = "cuda"
+    sample_rate: int = 24000
+    base_url: str | None = None
+
+
+class Settings(BaseSettings):
+    """Root configuration object."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="VOXLAB__",
+        env_nested_delimiter="__",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    stt: SttSettings = Field(default_factory=SttSettings)
+    llm: LlmSettings = Field(default_factory=LlmSettings)
+    tts: TtsSettings = Field(default_factory=TtsSettings)
+    transport: str = "null"
+
+
+def load_settings() -> Settings:
+    """Read the configuration. Kept as a function so tests can bypass it."""
+    return Settings()
