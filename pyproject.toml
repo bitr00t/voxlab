@@ -37,7 +37,9 @@ stt = [
 # relying on this extra; the TTS ecosystem renames packages often.
 tts = ["qwen-tts"]
 # Phase 1 audio path: direct microphone and speaker access on the host OS.
-audio = ["sounddevice>=0.4.7", "numpy>=1.26"]
+# soxr is what keeps resampling quality high in front of the recogniser;
+# without it the code falls back to linear interpolation and says so.
+audio = ["sounddevice>=0.4.7", "numpy>=1.26", "soxr>=0.4"]
 # Phase 2 audio path: browser transport over WebRTC.
 webrtc = ["livekit-agents>=0.12"]
 dev = [
@@ -71,12 +73,27 @@ select = ["E", "F", "I", "UP", "B"]
 # implement them.
 "src/voxlab/providers/base.py" = ["B024", "B027"]
 "src/voxlab/audio/transport.py" = ["B027"]
+"src/voxlab/providers/tts/engine.py" = ["B027"]
 
 [tool.mypy]
-python_version = "3.11"
+# No python_version pin: it makes mypy parse installed stubs with the grammar of
+# that version, and numpy's bundled stubs use 3.12 syntax. The interpreter the
+# virtual environment runs decides instead.
 packages = ["voxlab"]
 mypy_path = "src"
 strict = true
+
+[[tool.mypy.overrides]]
+# Optional runtime dependencies that ship no type information.
+module = [
+    "faster_whisper.*",
+    "ctranslate2.*",
+    "sounddevice.*",
+    "soxr.*",
+    "transformers.*",
+    "torch.*",
+]
+ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 # Optional runtime dependencies that ship no type information.
