@@ -1,49 +1,34 @@
 """Qwen3-TTS on the local GPU.
 
-DELIBERATELY UNIMPLEMENTED IN PHASE 0.
+Synthesis happens one sentence at a time rather than once for the whole reply.
+That is what makes the first audio leave early: a four-sentence answer otherwise
+stays silent until the last word has been rendered, which is most of the latency
+budget spent on nothing.
 
-The interface below is the contract the rest of the pipeline relies on; the
-model call is left open on purpose, because the Qwen3-TTS Python API and its
-distribution name should be read off the current upstream release rather than
-guessed at. Filling in `_synthesize_blocking` is the first task of Phase 1.
-
-What is already decided, and what the implementation has to honour:
-
-* Output is mono 16-bit PCM at `sample_rate`, matching the project convention in
-  voxlab.types. Whatever the model emits natively gets converted here, not by
-  the caller.
-* Synthesis is chunked. Qwen3-TTS supports streaming output, which is the reason
-  it was picked over Piper for this project: the first audio chunk has to leave
-  before the full sentence is synthesised, or the latency budget is gone.
-* The model call is blocking, so it runs in a worker thread like the Whisper one.
-* Roughly 4 GB of VRAM is the documented minimum. Budget it alongside Whisper
-  large-v3 at float16 and Qwen3 on Ollama before assuming all three fit.
-
-A caveat worth keeping in the repository rather than in someone's head: local
-German speech synthesis at conversational latency is still the weakest link in
-a self-hosted stack. The evaluation harness in Phase 4 exists to measure the
-real-time factor on this specific hardware instead of trusting a benchmark run
-on someone else's machine. Piper with a Thorsten voice remains the fallback if
-the numbers disappoint - which is precisely why this provider sits behind an
-interface.
+The model call itself is blocking and runs in a worker thread. The uncertain
+part - how to actually invoke Qwen3-TTS - lives in voxlab.providers.tts.engine,
+so this module stays stable when the upstream API moves.
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections.abc import AsyncIterator
 
+from voxlab.audio.resample import resample_pcm
 from voxlab.providers.base import TextToSpeech
 from voxlab.providers.registry import register_tts
+from voxlab.providers.tts.engine import Engine, Samples, load_engine
+from voxlab.text import split_sentences
 from voxlab.types import AudioChunk
 
-
-class Qwen3TtsNotImplementedError(NotImplementedError):
-    """Raised until the Phase 1 implementation lands."""
+_LOG = logging.getLogger(__name__)
 
 
 @register_tts("qwen3")
 class Qwen3Tts(TextToSpeech):
-    """Local neural speech synthesis with Qwen3-TTS."""
+    """Local neural speech synthesis."""
 
     name = "qwen3"
 
@@ -53,20 +38,54 @@ class Qwen3Tts(TextToSpeech):
         voice: str = "de-default",
         device: str = "cuda",
         sample_rate: int = 24000,
+        adapter: str | None = None,
         **_: object,
     ) -> None:
         self._model_name = model
         self._voice = voice
         self._device = device
         self._sample_rate = sample_rate
+        self._adapter = adapter
+        self._engine: Engine | None = None
 
     async def start(self) -> None:
-        raise Qwen3TtsNotImplementedError(
-            "Qwen3-TTS is scheduled for Phase 1. Use VOXLAB__TTS__PROVIDER=silent "
-            "until then, and check the upstream release for the current package "
-            "name and API before implementing this."
+        if self._engine is not None:
+            return
+        self._engine = await asyncio.to_thread(
+            load_engine, self._model_name, self._device, self._adapter
         )
+        _LOG.info("speech synthesis ready: %s", type(self._engine).__name__)
 
     async def synthesize(self, text: str) -> AsyncIterator[AudioChunk]:
-        raise Qwen3TtsNotImplementedError("see start()")
-        yield  # pragma: no cover  (makes this an async generator)
+        if self._engine is None:
+            raise RuntimeError("call start() before synthesize()")
+
+        for sentence in split_sentences(text):
+            samples = await asyncio.to_thread(self._engine.synthesize, sentence, self._voice)
+            yield self._to_chunk(samples)
+
+    def _to_chunk(self, samples: Samples) -> AudioChunk:
+        """Convert model output to the project's PCM convention.
+
+        Models emit float32 in [-1, 1] or int16, at whichever rate they were
+        trained on. Both are normalised here so that no other part of the system
+        has to know which.
+        """
+        import numpy as np
+
+        array = np.asarray(samples.data).squeeze()
+        if array.dtype.kind == "f":
+            # Clip before scaling: a model that overshoots would otherwise wrap
+            # around and turn a loud passage into noise.
+            array = np.clip(array, -1.0, 1.0)
+            array = (array * 32767.0).astype(np.int16)
+        else:
+            array = array.astype(np.int16)
+
+        pcm = resample_pcm(array.tobytes(), samples.sample_rate, self._sample_rate)
+        return AudioChunk(pcm=pcm, sample_rate=self._sample_rate)
+
+    async def aclose(self) -> None:
+        if self._engine is not None:
+            self._engine.close()
+            self._engine = None

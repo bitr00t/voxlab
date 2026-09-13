@@ -5,7 +5,7 @@ The single place where configuration strings turn into objects.
 
 from __future__ import annotations
 
-from voxlab.audio.transport import build_transport
+from voxlab.audio import build_transport
 from voxlab.config import Settings
 from voxlab.pipeline import VoicePipeline
 from voxlab.providers import registry
@@ -33,8 +33,17 @@ def build_pipeline(settings: Settings) -> VoicePipeline:
         device=settings.tts.device,
         sample_rate=settings.tts.sample_rate,
         base_url=settings.tts.base_url,
+        adapter=settings.tts.adapter,
     )
-    transport = build_transport(settings.transport)
+    transport = build_transport(
+        settings.transport,
+        target_sample_rate=settings.audio.capture_sample_rate,
+        input_device=settings.audio.input_device,
+        output_device=settings.audio.output_device,
+        block_size=settings.audio.block_size,
+        save_dir=settings.audio.save_dir,
+        max_turns=settings.audio.max_turns,
+    )
     return VoicePipeline(
         transport=transport,
         stt=stt,

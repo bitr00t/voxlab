@@ -61,9 +61,9 @@ class NullTransport(AudioTransport):
 
     name = "null"
 
-    def __init__(self, turns: int = 1, sample_rate: int = 16000, **_: object) -> None:
+    def __init__(self, turns: int = 1, target_sample_rate: int = 16000, **_: object) -> None:
         self._turns = turns
-        self._sample_rate = sample_rate
+        self._sample_rate = target_sample_rate
         self.played_chunks: list[AudioChunk] = []
 
     async def utterances(self) -> AsyncIterator[AudioChunk]:

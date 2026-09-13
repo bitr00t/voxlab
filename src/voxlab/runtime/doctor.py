@@ -44,6 +44,8 @@ def run_all(
         _check_faster_whisper(),
         _check_ollama(llm_base_url, llm_model),
         _check_audio_devices(),
+        _check_resampler(),
+        _check_tts_engine(),
     ]
 
 
@@ -130,6 +132,40 @@ def _check_ollama(base_url: str, model: str) -> Check:
             "ollama", "warn", f"reachable, but no '{model}' model - run: ollama pull {model}"
         )
     return Check("ollama", "ok", f"reachable, {len(names)} model(s) available")
+
+
+def _check_resampler() -> Check:
+    if importlib.util.find_spec("soxr") is None:
+        return Check(
+            "resampler", "warn",
+            "soxr not installed - falling back to linear interpolation, which costs "
+            "recognition accuracy. pip install -e .[audio]",
+        )
+    return Check("resampler", "ok", "soxr")
+
+
+def _check_tts_engine() -> Check:
+    """Can a speech synthesis engine actually be constructed?
+
+    Checked here rather than discovered mid-call, because this is the part of
+    the stack whose Python API moves most.
+    """
+    from voxlab.providers.tts.engine import EngineError, probe
+
+    installed = [name for name, info in probe().items() if isinstance(info, dict)]
+    if not installed:
+        return Check(
+            "tts-engine", "warn", "no speech synthesis package found - see 'voxlab tts-probe'"
+        )
+    try:
+        from voxlab.providers.tts.engine import load_engine
+
+        load_engine("qwen3-tts", "cpu").close()
+    except EngineError as exc:
+        return Check("tts-engine", "warn", f"{', '.join(installed)} present, but: {exc}")
+    except Exception as exc:  # noqa: BLE001 - model loading fails in many ways
+        return Check("tts-engine", "warn", f"engine construction failed: {exc}")
+    return Check("tts-engine", "ok", f"constructed from: {', '.join(installed)}")
 
 
 def _check_audio_devices() -> Check:

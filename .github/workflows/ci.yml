@@ -25,7 +25,11 @@ jobs:
           cache: pip
 
       - name: Install
-        run: pip install -e ".[dev]"
+        # Same extras as the development setup, minus stt: type checking has to
+        # see the same type information the developer sees, or CI and the local
+        # run disagree about code that never changed. The stt extra is left out
+        # because it pulls several hundred megabytes of CUDA wheels.
+        run: pip install -e ".[dev,audio]"
 
       - name: Lint
         run: ruff check .

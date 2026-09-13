@@ -42,6 +42,27 @@ class TtsSettings(BaseModel):
     device: str = "cuda"
     sample_rate: int = 24000
     base_url: str | None = None
+    # Escape hatch for a moving upstream API: "module:function", returning an
+    # engine. See voxlab.providers.tts.engine.
+    adapter: str | None = None
+
+
+class AudioSettings(BaseModel):
+    """Capture and playback, used by the local device transport."""
+
+    # None means the operating system default. An index or a substring of the
+    # device name both work; `voxlab devices` lists them.
+    input_device: int | str | None = None
+    output_device: int | str | None = None
+    # What the recogniser wants. The transport falls back to the device's own
+    # rate and resamples when this one is refused.
+    capture_sample_rate: int = 16000
+    block_size: int = 1024
+    # Where to write one WAV per turn. Off by default; the evaluation harness in
+    # phase 4 is what this collects material for.
+    save_dir: str | None = None
+    # None means "until the user quits". Mostly useful for scripted runs.
+    max_turns: int | None = None
 
 
 class Settings(BaseSettings):
@@ -58,6 +79,7 @@ class Settings(BaseSettings):
     stt: SttSettings = Field(default_factory=SttSettings)
     llm: LlmSettings = Field(default_factory=LlmSettings)
     tts: TtsSettings = Field(default_factory=TtsSettings)
+    audio: AudioSettings = Field(default_factory=AudioSettings)
     transport: str = "null"
 
 
